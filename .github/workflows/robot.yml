@@ -1,0 +1,79 @@
+name: "🤖 Giant Robot"
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Номер issue для выполнения"
+        required: true
+        default: "1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: robot-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  solve:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'robot-task')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ISSUE_NUM: ${{ github.event.issue.number || inputs.issue_number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Установка робота
+        run: pip install --upgrade pip aider-chat pytest
+
+      - name: Читаю ТЗ из issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue view "$ISSUE_NUM" --json title,body > /tmp/issue.json
+          TITLE=$(jq -r .title /tmp/issue.json)
+          BODY=$(jq -r .body /tmp/issue.json)
+          { echo "# Задача #$ISSUE_NUM: $TITLE"; echo ""; echo "$BODY"; } > TASK.md
+          echo "=== Что прочитал робот ==="
+          cat TASK.md
+
+      - name: Робот работает
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          git config user.name  "giant-robot[bot]"
+          git config user.email "giant-robot[bot]@users.noreply.github.com"
+          git switch -c "robot/issue-$ISSUE_NUM"
+          aider --message-file TASK.md --architect --yes-always --no-check-update
+
+      - name: Пуш ветки и создание PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add -A
+          git diff --cached --quiet || git commit -m "🤖 артефакты задачи #$ISSUE_NUM"
+
+          COUNT=$(git rev-list --count origin/main..HEAD)
+          if [ "$COUNT" -eq 0 ]; then
+            gh issue comment "$ISSUE_NUM" --body "❌ Робот не внёс изменений. Уточни ТЗ."
+            exit 0
+          fi
+
+          git push -u origin "robot/issue-$ISSUE_NUM"
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "robot/issue-$ISSUE_NUM" \
+            --title "🤖 Робот: задача #$ISSUE_NUM" \
+            --body "Выполнена задача из issue #$ISSUE_NUM. Closes #$ISSUE_NUM")
+          gh issue comment "$ISSUE_NUM" --body "✅ Готово! Пул-реквест: $PR_URL"
