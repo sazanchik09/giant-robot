@@ -1,0 +1,9 @@
+openai-api-base: "https://open.bigmodel.cn/api/paas/v4"
+model: "openai/glm-4.7-flash"
+editor-model: "openai/glm-4.7-flash"
+weak-model: "openai/glm-4.7-flash"
+
+auto-commits: true
+auto-test: true
+test-cmd: "pytest"
+pretty: true
